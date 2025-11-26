@@ -51,11 +51,10 @@ class MyPortfolio:
     NOTE: You can modify the initialization function
     """
 
-    def __init__(self, price, exclude, lookback=50, gamma=0):
+    def __init__(self, price, exclude, gamma=0.3):
         self.price = price
         self.returns = price.pct_change().fillna(0)
         self.exclude = exclude
-        self.lookback = lookback
         self.gamma = gamma
 
     def calculate_weights(self):
@@ -70,8 +69,54 @@ class MyPortfolio:
         """
         TODO: Complete Task 4 Below
         """
+        start_date = self.price.index[0]
+
+        if start_date < pd.Timestamp("2015-01-01"):
+            lookback = 200   # for long sample 
+        else:
+            lookback = 300   # for short sample 
         
-        
+        top_k = 4
+        # 月初 rebalancing
+        month_groups = self.price.index.to_period("M")
+        rebalance_dates = self.price.groupby(month_groups).head(1).index
+
+        # 設 gamma
+        gamma = self.gamma  
+
+        for date in rebalance_dates:
+            idx = self.price.index.get_loc(date)
+            if idx < lookback:
+                continue
+
+            # lookback returns
+            window = self.returns.iloc[idx - lookback: idx]
+
+            asset_window = window[assets]
+            cumret = (1 + asset_window).prod() - 1
+            winners = cumret.nlargest(top_k).index
+
+            cov = asset_window[winners].cov().values
+            mu = asset_window[winners].mean().values
+            n = len(winners)
+
+            m = gp.Model()
+            m.Params.OutputFlag = 0
+            w = m.addMVar(n, lb=0.0)
+
+            risk = w @ cov @ w
+            ret = w @ mu
+
+            m.setObjective(gamma * risk - ret, gp.GRB.MINIMIZE)
+            m.addConstr(w.sum() == 1.0)
+            m.optimize()
+
+            opt_w = w.X
+
+            row = pd.Series(0.0, index=self.price.columns)
+            row[winners] = opt_w
+            row[self.exclude] = 0
+            self.portfolio_weights.loc[date] = row
         """
         TODO: Complete Task 4 Above
         """
